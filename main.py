@@ -67,8 +67,6 @@ Output: {"categoria":"Dúvida","justificativa":"Pergunta sobre política de troc
 Input: “Equipe atenciosa e entrega rápida, parabéns!”
 Output: {"categoria":"Elogio","justificativa":"Expressa satisfação e reconhecimento"}
 
-Ao final do prompt, inclua o bloco de entrada:
-
 [ENTRADA]
 {{texto}}
 """
