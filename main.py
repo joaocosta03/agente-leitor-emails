@@ -266,7 +266,7 @@ def classify_email(text: str) -> Dict[str, str]:
         prompt=PROMPT_CLASSIFICACAO,
         input_text=text,
         temperature=0.2,
-        top_p=0.95,
+        top_p=0.3,
         max_output_tokens=256,
     )
     # Tenta interpretar a resposta como JSON estruturado
@@ -279,7 +279,7 @@ def classify_email(text: str) -> Dict[str, str]:
             prompt=REPAIR_PROMPT,
             input_text=raw,
             temperature=0.2,
-            top_p=0.95,
+            top_p=0.3,
             max_output_tokens=256,
         )
         data = parse_json_maybe(repair_raw)
@@ -308,7 +308,7 @@ def summarize_and_reply(text: str) -> Dict[str, str]:
         prompt=PROMPT_SUM_RESPOSTA,
         input_text=text,
         temperature=0.4,
-        top_p=0.95,
+        top_p=0.5,
         max_output_tokens=512,
     )
     # Procura extrair JSON estruturado com resumo e resposta
@@ -321,7 +321,7 @@ def summarize_and_reply(text: str) -> Dict[str, str]:
             prompt=REPAIR_PROMPT,
             input_text=raw,
             temperature=0.4,
-            top_p=0.95,
+            top_p=0.5,
             max_output_tokens=512,
         )
         data = parse_json_maybe(repair_raw)
