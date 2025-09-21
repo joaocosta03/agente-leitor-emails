@@ -111,15 +111,20 @@ MODEL: Optional[genai.GenerativeModel] = None
 def init_gemini() -> genai.GenerativeModel:
     """Configura o cliente Gemini a partir de variáveis de ambiente."""
     global MODEL
+    # Carrega variaveis de ambiente do arquivo .env, se existir
     load_dotenv()  # opcional; não falha se não existir .env
+    # Le a chave da API e o nome do modelo definidos no ambiente
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite").strip() or "gemini-2.0-flash-lite"
 
+    # Interrompe a execucao caso a credencial obrigatoria nao esteja presente
     if not api_key:
         logger.error("GEMINI_API_KEY não configurada. Defina no ambiente ou em um arquivo .env.")
         sys.exit(1)
 
+    # Configura o SDK do Gemini com a chave informada
     genai.configure(api_key=api_key)
+    # Cria a instancia do modelo para reutilizacao global
     MODEL = genai.GenerativeModel(model_name=model_name)
     return MODEL
 
@@ -127,8 +132,10 @@ def init_gemini() -> genai.GenerativeModel:
 def get_model() -> genai.GenerativeModel:
     """Obtém o modelo inicializado; se ainda não, inicializa agora."""
     global MODEL
+    # Inicializa o cliente somente na primeira utilizacao
     if MODEL is None:
         return init_gemini()
+    # Reaproveita o modelo ja carregado nas chamadas seguintes
     return MODEL
 
 
@@ -156,14 +163,17 @@ def call_gemini(
     Executa uma geração com Gemini usando um prompt e um texto de entrada.
     Retorna o conteúdo de texto agregado. Levanta GeminiCallError para retentativas.
     """
+    # Garante que prompt e texto sejam strings validas antes da chamada
     if not isinstance(prompt, str) or not isinstance(input_text, str):
         raise GeminiCallError("prompt/input_text inválidos (tipos incorretos).")
 
-    # Renderiza o bloco [ENTRADA] substituindo {{texto}} no final do prompt
+    # Injeta o conteudo do e-mail no template do prompt
     rendered = prompt.replace("{{texto}}", input_text)
 
     try:
+        # Recupera a instancia global do modelo configurado
         model = get_model()
+        # Dispara a geracao de conteudo na API do Gemini
         resp = model.generate_content(
             rendered,
             generation_config={
@@ -172,7 +182,9 @@ def call_gemini(
                 "max_output_tokens": max_output_tokens,
             },
         )
+        # Tenta obter o texto principal retornado pela API
         text = getattr(resp, "text", None)
+        # Faz fallback para concatenar partes caso o campo principal esteja vazio
         if not text:
             try:
                 parts = resp.candidates[0].content.parts
@@ -180,10 +192,12 @@ def call_gemini(
             except Exception:
                 text = None
 
+        # Solicita nova tentativa se a resposta permanecer vazia
         if not text or not text.strip():
             raise GeminiCallError("Resposta vazia do modelo.")
         return text.strip()
     except Exception as e:
+        # Propaga erros como GeminiCallError para acionar retentativas
         raise GeminiCallError(str(e)) from e
 
 
@@ -194,28 +208,37 @@ def call_gemini(
 
 def remove_code_fences(s: str) -> str:
     """Remove cercas de código Markdown para facilitar parse de JSON."""
+    # Retorna vazio se a entrada nao for texto
     if not isinstance(s, str):
         return ""
+    # Remove espacos extras nas extremidades
     s = s.strip()
+    # Elimina cercas de codigo no inicio
     s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+    # Elimina cercas de codigo no fim
     s = re.sub(r"\s*```$", "", s)
     return s.strip()
 
 
 def parse_json_maybe(s: str) -> Optional[Dict[str, Any]]:
     """Tenta carregar JSON com algumas tolerâncias leves."""
+    # Nao tenta parsear quando nao ha conteudo
     if s is None:
         return None
+    # Limpa possiveis cercas de Markdown antes do parse
     txt = remove_code_fences(s)
+    # Tenta carregar o JSON diretamente da resposta
     try:
         return json.loads(txt)
     except Exception:
+        # Busca manualmente um objeto JSON delimitado dentro do texto
         m = re.search(r"\{[\s\S]*\}", txt)
         if m:
             try:
                 return json.loads(m.group(0))
             except Exception:
                 return None
+    # Retorna None caso nenhum JSON valido seja encontrado
     return None
 
 
@@ -224,17 +247,21 @@ def parse_json_maybe(s: str) -> Optional[Dict[str, Any]]:
 # -----------------------
 def validate_category(categoria: str) -> str:
     """Garante que a categoria esteja no conjunto permitido; caso contrário, usa 'Dúvida'."""
+    # Aceita apenas categorias previstas, removendo espacos extras
     if isinstance(categoria, str) and categoria.strip() in ALLOWED_CATEGORIES:
         return categoria.strip()
+    # Registra um aviso quando o modelo devolve categoria fora do catalogo
     logger.warning("Categoria inválida retornada pelo modelo; mapeando para 'Dúvida'.")
     return "Dúvida"
 
 
 def classify_email(text: str) -> Dict[str, str]:
     """Classifica um e-mail com justificativa curta. Sempre retorna JSON válido."""
+    # Retorna fallback padrao quando o corpo do e-mail esta vazio
     if not isinstance(text, str) or not text.strip():
         return {"categoria": "Dúvida", "justificativa": "Texto vazio ou incompreensível"}
 
+    # Chama o modelo para classificar o texto recebido
     raw = call_gemini(
         prompt=PROMPT_CLASSIFICACAO,
         input_text=text,
@@ -242,9 +269,12 @@ def classify_email(text: str) -> Dict[str, str]:
         top_p=0.95,
         max_output_tokens=256,
     )
+    # Tenta interpretar a resposta como JSON estruturado
     data = parse_json_maybe(raw)
 
+    # Solicita ao modelo que reescreva a resposta caso o JSON venha invalido
     if data is None:
+        # Solicita reparo de JSON ao modelo para tentar novo parse
         repair_raw = call_gemini(
             prompt=REPAIR_PROMPT,
             input_text=raw,
@@ -254,9 +284,11 @@ def classify_email(text: str) -> Dict[str, str]:
         )
         data = parse_json_maybe(repair_raw)
 
+    # Usa categoria de seguranca se o reparo tambem falhar
     if not isinstance(data, dict):
         return {"categoria": "Dúvida", "justificativa": "Falha ao interpretar resposta do modelo"}
 
+    # Normaliza a categoria e garante que esteja permitida
     categoria = validate_category(data.get("categoria", "Dúvida"))
     justificativa = data.get("justificativa", "") or "Classificação automática"
     return {"categoria": categoria, "justificativa": justificativa}
@@ -264,12 +296,14 @@ def classify_email(text: str) -> Dict[str, str]:
 
 def summarize_and_reply(text: str) -> Dict[str, str]:
     """Gera resumo (1 frase) e resposta curta/educada em PT-BR."""
+    # Retorna mensagens padrao quando nao ha conteudo para resumir
     if not isinstance(text, str) or not text.strip():
         return {
             "resumo": "Texto vazio; é necessário mais contexto do cliente.",
             "resposta": "Poderia fornecer mais detalhes (ex.: número do pedido e descrição do ocorrido) para ajudarmos com precisão?",
         }
 
+    # Pede ao modelo resumo e resposta curta para o e-mail
     raw = call_gemini(
         prompt=PROMPT_SUM_RESPOSTA,
         input_text=text,
@@ -277,9 +311,12 @@ def summarize_and_reply(text: str) -> Dict[str, str]:
         top_p=0.95,
         max_output_tokens=512,
     )
+    # Procura extrair JSON estruturado com resumo e resposta
     data = parse_json_maybe(raw)
 
+    # Tenta reparar a saida caso o primeiro parse falhe
     if data is None:
+        # Solicita reparo de JSON ao modelo para tentar novo parse
         repair_raw = call_gemini(
             prompt=REPAIR_PROMPT,
             input_text=raw,
@@ -289,26 +326,34 @@ def summarize_and_reply(text: str) -> Dict[str, str]:
         )
         data = parse_json_maybe(repair_raw)
 
+    # Aplica fallback seguro quando nao e possivel confiar nos dados
     if not isinstance(data, dict):
         return {
             "resumo": "Conteúdo não pôde ser resumido com segurança.",
             "resposta": "Agradecemos a mensagem. Pode compartilhar mais detalhes para apoiarmos melhor?",
         }
 
+    # Garante texto padrao caso o resumo venha vazio
     resumo = data.get("resumo", "") or "Resumo indisponível."
+    # Define resposta padrao quando o modelo nao retornar conteudo
     resposta = data.get("resposta", "") or "Agradecemos a mensagem. Em breve retornaremos com mais informações."
     return {"resumo": resumo, "resposta": resposta}
 
 
 def route_action(category: str) -> Dict[str, str]:
     """Decide a ação com base na categoria."""
+    # Reforca que a categoria usada na decisao e valida
     category = validate_category(category)
+    # Direciona reclamacoes para canal critico no Slack
     if category == "Reclamação":
         return {"acao": "abrir_notificacao_slack", "destino": "#reclamacoes-urgentes"}
+    # Encaminha sugestoes para o time de produto
     if category == "Sugestão":
         return {"acao": "encaminhar_time_produto", "fila": "ideias"}
+    # Para duvidas, orienta resposta ao cliente
     if category == "Dúvida":
         return {"acao": "responder_cliente", "template": "faq_basico"}
+    # Demais casos viram elogios etiquetados
     return {"acao": "marcar_como_elogio", "etiqueta": "elogios"}
 
 
@@ -316,8 +361,10 @@ def route_action(category: str) -> Dict[str, str]:
 # Execução principal
 # -----------------------
 def main() -> None:
+    # Inicializa o cliente do Gemini antes de processar
     init_gemini()
 
+    # Define a lista de e-mails de exemplo a serem processados
     emails = [
         {
             "id": "eml-001",
@@ -369,18 +416,26 @@ def main() -> None:
         },
     ]
 
+    # Itera pelos e-mails simulados para aplicar o fluxo
     for email in emails:
         try:
+            # Extrai pequeno trecho do corpo para logging
             snippet = email.get("corpo", "") or ""
+            # Registra no log qual e-mail esta em processamento
             logger.info(
                 f"Processando id={email.get('id')} assunto='{email.get('assunto', '')}' corpo='{snippet}'"
             )
 
+            # Obtem a classificacao automatica do e-mail
             cls = classify_email(email.get("corpo", ""))
+            # Extrai a categoria retornada com fallback seguro
             cat = cls.get("categoria", "Dúvida")
+            # Determina a acao de roteamento com base na categoria
             act = route_action(cat)
+            # Solicita resumo e resposta automatica ao modelo
             sr = summarize_and_reply(email.get("corpo", ""))
 
+            # Agrupa os dados para gerar a saida final
             record = {
                 "id": email.get("id"),
                 "categoria": cat,
@@ -388,8 +443,11 @@ def main() -> None:
                 "resposta": sr.get("resposta", ""),
                 "acao": act,
             }
+            # Emite o resultado no formato JSON no stdout
             print(json.dumps(record, ensure_ascii=False))
+        # Evita que uma excecao interrompa o processamento dos demais e-mails
         except Exception as e:
+            # Registra detalhes do erro encontrado
             logger.error(f"Falha ao processar id={email.get('id')}: {e}")
 
 
