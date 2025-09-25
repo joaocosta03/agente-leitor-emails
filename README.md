@@ -2,9 +2,9 @@ Script Python que classifica e-mails e gera respostas com Google Gemini.
 
 Configuração da chave: defina `GEMINI_API_KEY` no ambiente ou copie `config.example.env` para `.env` (não compartilhe a chave).
 
-Instalação: `python -m venv .venv && source .venv/bin/activate` (Linux/macOS) ou `.venv\\Scripts\\activate` (Windows) e depois `pip install -r requirements.txt`.
+Instalação: `python -m venv .venv && source .venv/bin/activate` (Linux/macOS) ou `.venv/Scripts/Activate.ps1` (Windows) e depois `pip install -r requirements.txt`.
 
-Execução: `GEMINI_API_KEY=... python main.py` (ou usando `.env`). Saída: 5–8 linhas JSON (uma por e-mail). Modelo (opcional): ajuste `GEMINI_MODEL` (padrão: `gemini-1.5-pro-latest`). Logs são sucintos e sem PII.
+Execução: `GEMINI_API_KEY=... python main.py` (ou usando `.env`). Saída: 5–8 linhas JSON (uma por e-mail). Modelo (opcional): ajuste `GEMINI_MODEL` (padrão: `gemini-flash-lite-latest`). Logs são sucintos e sem PII.
 
 Testes rápidos: após instalar dependências e setar a chave, rode `python main.py` e verifique JSON válido por linha no stdout.
 
